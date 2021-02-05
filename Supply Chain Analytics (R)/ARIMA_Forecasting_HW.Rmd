@@ -1,0 +1,218 @@
+---
+title : "Assignment #2: Matthew Ruffner" 
+output: html_notebook
+---
+***
+<center>
+## Individual Assignment #2: ARIMA Lab.
+#### Due: Nov. 23 by 12:00 noon
+#### (40 points)
+</center>
+***
+
+The file titled **US Retail Sales.csv** includes three time series as follows:
+  
+* GROC: US grocery stores sales,  
+* RETAIL: US retail sales (Total), and  
+* ECOMM: US Ecommerce sales.
+
+In the following code box we read the CSV file and set up the data as a *tsible* and then we plot it to examine it
+
+```{r}
+library(fpp3)
+
+D <- read.csv("US Retail Sales.csv") %>% 
+  mutate(DATE = yearquarter(mdy(DATE)),
+         RETAIL = as.numeric(RETAIL),
+         GROC  = as.numeric(GROC),
+         ECOMM = ifelse(is.na(ECOMM),0,as.numeric(ECOMM))) %>%
+  gather("SECTOR", "SALES", RETAIL, GROC, ECOMM) %>%
+  as_tsibble(index = DATE, key = "SECTOR")
+  
+D %>% autoplot(SALES) + 
+  facet_grid(vars(SECTOR), scales = "free_y")
+```
+
+We are interested in developing a long-term quarterly forecating model (20 quarters) for the national sales of each of the three sectors in the data set.  For this purpose we subset the data into *training* and *testing* sets as follows:
+
+```{r}
+# Training Set
+TR <- D %>% filter(DATE <= yearquarter("2014 Q4"))
+# Testing Set
+TE <- D %>% filter(DATE >= yearquarter("2015 Q1"))
+```
+
+1. Using the automatic selection feature in *fable* fit an ARIMA and an ETS model for each of the three time series (six models in total).  Report the name/order of each model and the corresponding AICc and BIC.
+```{r}
+# ETS model
+ets.TR <- TR %>% 
+  model(m.ets.auto = ETS(SALES))
+
+ets.TR %>% 
+  tidy()
+
+ets.TR %>% 
+  filter(SECTOR == "ECOMM"| SECTOR == 'GROC' | SECTOR == 'RETAIL') %>%
+  glance() # gives the AIC and the BIC for each model
+
+# fitting model 
+
+m.ets <- TR %>%  
+  model(m.ets.auto = ETS(SALES))
+
+# ARIMA model
+arima.TR <- TR %>% 
+  model(m.arima.auto = ARIMA(SALES))
+
+arima.TR %>% 
+  tidy()
+
+arima.TR %>% 
+  filter(SECTOR == "ECOMM"| SECTOR == 'GROC' | SECTOR == 'RETAIL') %>%
+  glance() # gives the AIC and the BIC for each model
+
+# fitting model 
+
+m.arima <- TR %>%  
+  model(m.arima.auto = ARIMA(SALES))
+```
+For the fitted ETS models I got the following values for my three models:
+ECOMM -- AICc = 1798.884, BIC = 1819.384, ETS(A,A,A)
+GROC -- AICc = 1698.271, BIC = 1718.772, ETS(M,A,A)
+RETAIL -- AICc = 2201.538, BIC = 2222.039, ETS(M,A,M)
+
+For the fitted ARIMA models I got the following values for my three models:
+ECOMM -- AICc = 1517.745, BIC = 1520.164, ARIMA(0,1,0)(0,1,0)[4]
+GROC -- AICc = 1468.155, BIC = 1472.944, ARIMA(0,1,0)(0,1,1)[4]
+RETAIL -- AICc = 1967.472	, BIC = 1981.299, ARIMA(2,0,1)(0,1,0)[4]
+
+
+2. Examine the residuals of all the models using the Ljung-Box test and the **gg_tsresiduals()** function. Is there a validity problem with any of the models?
+```{r}
+# Examine residuals to validate assumption of independence
+# the ljung-box test null hyp. is that residuals are not correlated 
+# we want a large val of p so we cannot reject
+
+# ARIMA models
+m.arima %>% augment() %>%
+  features(.resid, ljung_box, lag = 8) # choosing a lag of 2 times the number of seasons
+
+m.arima %>% filter(SECTOR == "ECOMM") %>% gg_tsresiduals()
+m.arima %>% filter(SECTOR == "GROC") %>% gg_tsresiduals()
+m.arima %>% filter(SECTOR == "RETAIL") %>% gg_tsresiduals()
+
+# ETS models
+m.ets %>% augment() %>%
+  features(.resid, ljung_box, lag = 8) # choosing a lag of 2 times the number of seasons
+
+m.ets %>% filter(SECTOR == "ECOMM") %>% gg_tsresiduals()
+m.ets %>% filter(SECTOR == "GROC") %>% gg_tsresiduals()
+m.ets %>% filter(SECTOR == "RETAIL") %>% gg_tsresiduals()
+
+# Examine Information Criteria and select model 
+# with lowest information criteria from among
+# validated models
+
+glance(m.arima)  
+glance(m.ets) 
+```
+The null hypothesis of the Ljung-box test is that the residuals are uncorrelated, therefore we don't want to reject and desire large p-values (above 0.05). Looking at our resulting model p-values we can see that for both the ETS and the ARIMA models, the E-commerce sector has a validity problem since we reject the null hypothesis of the Ljung-box test.
+
+3. For each of the models with validity problems, find an alternate model making manual order and/or model-type selections.  For the model(s) selected, report the model name/order, AICc, BIC, and examine the residuals.
+```{r}
+TR.ecomm <- D %>% filter(DATE >= yearquarter("2000 Q1") & DATE <= yearquarter("2014 Q4")) %>% filter(SECTOR == "ECOMM")
+m <- TR.ecomm %>%  
+  model(m.auto = ETS(SALES),
+        m.MMA = ETS(SALES ~ error("M") + trend("M") + season("A")))
+
+m.a <- TR.ecomm %>%
+  model(m.a.auto = ARIMA(SALES),
+        m6 = ARIMA(SALES ~ pdq(2,2,0) + PDQ(0,2,1)))
+
+m %>% augment() %>%
+  filter(SECTOR == "ECOMM") %>%
+  features(.resid, ljung_box, lag = 8)# choosing a lag of 2 times the number of seasons
+
+m.a %>% augment() %>%
+  filter(SECTOR == "ECOMM") %>%
+  features(.resid, ljung_box, lag = 8) 
+
+m %>% filter(SECTOR == "ECOMM") %>% select(m.MMA) %>% gg_tsresiduals()
+m.a %>% filter(SECTOR == "ECOMM") %>% select(m6) %>% gg_tsresiduals()
+
+glance(m) 
+glance(m.a)
+```
+I was able to identify both an ETS and a ARIMA model which, unlike the auto selected model, weren't able to reject the null hypothesis for their respective Ljung box tests. However, for the ETS model the AICc and the BIC weren't able to improve. Therefore, since the ARIMA model does improve the BIC and the AICc, we would move forward with the ARIMA as our model of choice for e-commerce. Interestingly, for the ARIMA model, the residual plot (having removed years where e-commerce wasn't a reality yet) shows residuals of near zero for almost 2 and a half years before we start getting any sort of trend.
+
+
+4. For the set of six models selected (automatically and/or manually) prepare 20 quarter forecasts and examine the *training* and *testing* accuracy metrics.  Based on a holistic analysis of the information criteria, MAE and MAPE, select the best model for each **SECTOR** and report the model name/order and their parameter values.
+```{r}
+ets.model <-  TR %>% 
+  model(m.ets.auto = ETS(SALES)) 
+
+m.chosen <- TR.ecomm %>%  
+  model(m.MMA = ETS(SALES ~ error("M") + trend("M") + season("A")))
+
+forecast.ets <- ets.model %>% 
+  filter(SECTOR == 'GROC' | SECTOR == 'RETAIL') %>%
+  forecast(h = 20)
+
+ecomm.forecast.ets <- m.chosen %>%
+  forecast(h = 20)
+
+rbind(ets.model %>% accuracy(), forecast.ets %>% filter(SECTOR == 'GROC' | SECTOR == 'RETAIL') %>% accuracy(data=TE))
+
+rbind(m.chosen %>% accuracy(), ecomm.forecast.ets %>% accuracy(data=TE))
+
+ets.model %>%  # getting the parameters
+  tidy()
+
+m.chosen %>%  # getting the parameters
+  tidy()
+
+# ARIMA
+
+arima.model <-  TR %>% 
+  model(m.arima.auto = ARIMA(SALES)) 
+
+m.a.chosen <- TR.ecomm %>%
+  model(m6 = ARIMA(SALES ~ pdq(2,2,0) + PDQ(0,2,1)))
+
+forecast.arima <- arima.model %>% 
+  filter(SECTOR == 'GROC' | SECTOR == 'RETAIL') %>%
+  forecast(h = 20)
+
+ecomm.forecast.arima <- m.a.chosen %>%
+  forecast(h = 20)
+
+rbind(arima.model %>% accuracy(), forecast.arima %>% filter(SECTOR == 'GROC' | SECTOR == 'RETAIL') %>% accuracy(data=TE))
+
+rbind(m.a.chosen %>% accuracy(), ecomm.forecast.arima %>% accuracy(data=TE))
+ 
+arima.model %>%  # getting the parameters
+  tidy()
+
+m.a.chosen %>%  # getting the parameters
+  tidy()
+
+```
+Our forecast shows superior test performance, according to accuracy metrics, for the ETS forecast of the RETAIL sector with a MAE of 18253.4631 and a MAPE of 1.4380362. Additionally, the ETS forecast of the ECOMM sector performed better than the complementary ARIMA model with a test MAE of 4091.101 and a test MAPE of 3.310923. However, our forecast shows superior test performance for the ARIMA forecast of the GROC sector with a MAE of 1575.6330	and MAPE a of 0.9929108.  Please refer to the table aboce for the associated parameters for the models.
+
+
+5. For any ARIMA model in (4) write the corresponding B-polynomial.
+$\LaTeX$
+The ARIMA model for the GROC sector was: $$ARIMA(0,1,0)(0,1,1)_{4}$$
+The corresponding B-polynomial is: $$(1 - B)y_t = (1+𝜃_1 𝐵)(1+Θ_1 𝐵^4) 𝑒_𝑡$$
+
+
+6. Plot the best forecast for each **SECTOR**, their 80% and 95% confidence intervals and overlay the testing data.
+```{r}
+# ets plot for retail sector
+autoplot(forecast.ets %>% filter(SECTOR == 'RETAIL')) +
+  geom_point(data = TE %>% filter(SECTOR == 'RETAIL') %>% select(SALES), mapping = aes(y = SALES) , col = "red") 
+
+# arima plot for grocery sector
+autoplot(forecast.arima %>% filter(SECTOR == 'GROC')) +
+  geom_point(data = TE %>% filter(SECTOR == 'GROC') %>% select(SALES), mapping = aes(y = SALES) , col = "red")
+```

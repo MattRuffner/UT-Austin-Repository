@@ -1,0 +1,234 @@
+---
+title : "Supply Chain HW1 Matthew Ruffner" 
+output: html_notebook
+---
+***
+<center>
+## Individual Assignment #1: ETS
+#### Due: Nov. 5 (Before Class)
+#### (40 points)
+</center>
+***
+
+You have been hired by a company in the hospitality business to help them plan the staffing levels for the following year.  The company operates resorts in three regions of the New South Wales of Australia; the three regions are the **Sydney**, the **South Coast** and the **North Coast NSW** areas.
+
+As it takes time to hire new personnel and it is necessary for any new employee to undergo a detailed training program before starting to work, the company needs to plan its personnel requirements one year in advance.  Furthermore, as it is possible for the company to transfer qualified personnel between regions, they are interested only in an aggregate forecast of their demand 
+
+As the company caters to **Holiday** travelers, and it has been growing faster than the market (i.e., it has been gaining market share), the Chief Commercial Officer estimates that next year they will have respectively (3%, 4%, 4%) of only the **Holiday** travelers in the (**Sydney**, **South Coast**, and **North Coast NSW**) regions respectively.  Furthermore based on prior experience they anticipate that each traveler will stay respectively (5,2,2) hotel-nights in (**Sydney**, **South Coast**, and **North Coast NSW**) respectively
+
+To forecast demand in hotel-nights use the **tourism** data set in **fpp3**.  This data set reports the quarterly trips (in thousands) to different destinations, and as this data set has a *tsibble* structure, you can use **tidyverse** functions to subset the time-series of interest.  
+
+For the purposes of this assignment ignore all data before **2008 Q1** and use the data from **2008 Q1** through **2016 Q4** as a traing set and the four quarters of **2017** as a testing set.
+
+If you need to dust-off the tidyverse functions, a good reference is the electronic book [*R for Data Science*](https://r4ds.had.co.nz/)  or alternatively, if you only need a quick refresher of the **dplyr** and **tidyr**   functions you can use the following [*Data Wrangling Cheat Sheet*](https://rstudio.com/wp-content/uploads/2015/02/data-wrangling-cheatsheet.pdf)
+
+
+### Part I.  Model-Aggregation Forecast 
+
+1. After subsetting for the time-series of interest in the **tourism** data set (a *tsibble*), add to the restricted set the corresponding demand time-series, by creating a column called *Demand*  for each of the corresponding regions of interest.  The *Demand* column should contain the hotel-nights (in thousands) corresponding to each of the *Trips* observations. After creating the *Demand* column, fit automatically the best **ETS** model for each *Demand* time-series. In addition to the automatic fit, one of your colleagues suggest that you should try the "AAM" model and the "AAdM" models as they may be preferred under the *BIC* criterion.  Report for each region the best model as well as the corresponding *AICc* and *BIC*. What is the best model according to the information criteria?
+
+```{r}
+library(fpp3)
+
+D1 <- tourism %>% 
+  filter(Quarter >= yearquarter("2008 Q1")) %>%
+  filter(Region == 'Sydney' | Region == 'South Coast' | Region == 'North Coast NSW') %>%
+  filter(Purpose == "Holiday") %>%
+  group_by(Region) %>%
+  mutate(Demand = case_when(
+    Region == 'Sydney' ~ .03*Trips*5,
+    Region == 'South Coast' ~ .04*Trips*2,
+    Region == 'North Coast NSW' ~ .04*Trips*2)) %>%
+  summarize(Demand) 
+
+
+
+train.tourism = D1 %>% filter(Quarter <= yearquarter("2016 Q4"))
+test.tourism = D1 %>% filter(Quarter > yearquarter("2016 Q4"))
+
+# We first fit a model automatically on the training set defined above
+
+ets.train <- train.tourism %>% 
+  model(m.auto = ETS(Demand))
+
+ets.train %>% 
+  tidy()
+
+ets.train %>% 
+  filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW') %>%
+  glance() # gives the AIC and the BIC for each model
+
+# fitting model to prespecified models AAM and AAdM
+
+m <- train.tourism %>%  
+  model(m.auto = ETS(Demand),
+        m.AAM = ETS(Demand ~ error("A") + trend("A") + season("M")),
+        m.AAdM = ETS(Demand ~ error("A") + trend("Ad") + season("M")))
+
+m %>% 
+  tidy()
+
+m %>% 
+  select(m.AAM | m.AAdM) %>%
+  filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW') %>%
+  glance()
+```
+According to the information criteria, the automatic fitting model performed the best for both AICc and BIC for all three regions. For North Coast NSW, the resulting AICc was 258.49 and the BIC was 265.58. For South Coast, the resulting AICc was 239.45 and the BIC was 246.53. For Sydney, the resulting AICc was 291.81 and the BIC was 298.90.
+
+2. Using the best model selected in (1), prepare a forecast for the four quarters of 2017 and report for each time series the in-sample (training) MAPE, and out-of-sample (testing) MAPE.  
+
+```{r}
+# Models can be augmented by adding fitted and residual values 
+# for every observation in the training set
+
+ets.train.aug <- ets.train %>% 
+  augment()
+
+ets.train.aug.r <- ets.train.aug %>% 
+  filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW')
+
+ets.train.aug.r %>%
+  autoplot(.vars = Demand, col = "black") +
+  geom_point(data = ets.train.aug.r, mapping = aes(y = .fitted))
+
+
+#forecasting
+
+f <- ets.train %>% # f is a time series table (table of forecast = 'fable')
+  filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW') %>% # selecting rows with purpose = holiday
+  forecast(h = 4) # forecast 4 periods into the future, returns a dist. of forecasts (a number plus an error term->zero mean or a const. val., and st. dev of error term)
+
+test.tourism.r <- test.tourism %>% 
+  filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW')
+  
+
+f %>% filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW') %>%
+  filter(.model == "m.auto") %>%  autoplot(train.tourism) + # added this line see line 81
+  geom_point(data = ets.train.aug.r, mapping = aes(y = .fitted), col = "blue") +
+  geom_point(data = test.tourism.r, mapping = aes(y = Demand), col = "red") # actual vals of testing period
+
+# Examining In-Sample and Out-of-Sample Accuracy Statistics
+
+rbind(ets.train %>% filter(Region == "Sydney"| Region == 'South Coast' | Region == 'North Coast NSW') %>% accuracy(), # will return the training accuracy metric
+      f %>% accuracy(data = D1)) # this will select the testing data and combines it with the rest
+```
+The resulting training set, test set MAPE for North Coast NSW were 8.939426, 7.415029	respectively. The resulting training set, test set MAPE for South Coast were 8.453145	, 6.935704	respectively. The resulting training set, test set MAPE for Sydney were 7.426381, 8.006385 respectively.
+
+3. Add the three forecasts of each region for the selected model to obtain the total forecast and compute the fitted (training) MAPE and the testing MAPE.  Compare the MAPEs of the aggregate forecasts with those of the regional forecasts.  Which ones are larger/smaller? Explain why did you obtain these results.
+
+```{r}
+m.aug.train <- m %>%
+  augment() %>%
+  filter(.model == 'm.auto') %>%
+  summarize(fitted.demand = sum(.fitted))
+
+m.aug.test <- m %>%
+  select(m.auto) %>%
+  forecast(h = 4) %>%
+  summarize(fitted.demand = sum(.mean))
+
+true.train <- train.tourism %>%
+  summarize(Demand = sum(Demand))
+
+true.test <- test.tourism %>%
+  summarize(Demand = sum(Demand))
+
+MAPE.train = mean(abs(true.train$Demand- m.aug.train$fitted.demand)/true.train$Demand) * 100
+MAPE.test = mean(abs(true.test$Demand- m.aug.test$fitted.demand)/true.test$Demand) * 100
+
+MAPE.train.print = print(paste('Training MAPE:',MAPE.train))
+MAPE.test.print = print(paste('Test MAPE:',MAPE.test))
+```
+Calculating the MAPE of the training and test sets for the aggregate forecasts we found were 4.96944405056193 and 6.19868604316066 respectively. Comparing regional forecasts and the aggregate forecasts, we can see that the aggregate forecasts returned the lower MAPE for both the training and test sets when compared to all regional forecasts. We are operating with more data for the aggregate forecast in addition to adding the fitted values via the augment() function to give our model more predictive power allowing for higher overall accuracy (MAPE).
+
+### Part II. Data-Aggregation Forecast
+
+4. Now aggregate the region-specific demand data to compile an aggregate demand time series, the aggregated demand into traing and testing time-series, and fit the automatic model, plus the two models you fitted in Question (1)  What is the best model for the aggregate data?
+
+```{r}
+D2 <- D1 %>%
+  summarize(Demand = sum(Demand))
+
+D2.train= D2 %>% filter(Quarter <= yearquarter("2016 Q4"))
+D2.test = D2 %>% filter(Quarter > yearquarter("2016 Q4"))
+# fitting model to prespecified models AAM and AAdM
+
+m.agg <- D2.train %>%  
+  model(m.agg.auto = ETS(Demand),
+        m.agg.AAM = ETS(Demand ~ error("A") + trend("A") + season("M")),
+        m.agg.AAdM = ETS(Demand ~ error("A") + trend("Ad") + season("M")))
+
+m.agg %>% 
+  glance() %>%
+  select(.model, AICc, BIC)
+```
+According to the information criteria, the automatic model appears to be the best model available to us for the aggregate data.
+
+5. Using the best model selected in (4), prepare a forecast for the four quarters of 2017 and report the in-sample (training) MAPE, and out-of-sample (testing) MAPE. 
+
+```{r}
+auto.D2 <- D2.train %>% 
+  model(m.agg.auto = ETS(Demand))
+
+auto.D2 %>% 
+  tidy()
+
+auto.D2.aug <- auto.D2 %>% 
+  augment()
+
+f.auto.D2 <- auto.D2 %>% 
+  forecast(h = 4)
+
+rbind(auto.D2 %>%  accuracy(), # will return the training accuracy metric
+      f.auto.D2 %>% accuracy(data = D2)) # this will select the testing data and combines it with the rest
+```
+As can be seen, the in-sample MAPE is 4.628649 and the out-of-sample MAPE is 5.161460
+
+### Part III. Forecasting Model Analysis and Aggregate Forecast
+
+6. For the model with best testing MAPE performance plot the aggregate demand, the aggregate fitted values, the testing forecast and the testing demand.
+
+```{r}
+f.auto.D2 %>% 
+  autoplot(D2.train) +
+  geom_point(data = auto.D2.aug, mapping = aes(y = .fitted), col = "blue") +
+  geom_point(data = D2.test, mapping = aes(y = Demand), col = "red") # plotting the quarterly test values
+```
+
+
+7. Using the best modeling approach (model-aggregation vs data-aggregation) and the best ETS model(s) selected, and using all the data available fit the model(s), report the model parameters, the in-sample MAPE, and plot the forecast for the four quarters of 2018.
+
+```{r}
+# The best modeling approach was the data-aggregation method
+best.model <- D2 %>%  
+  model(m.agg.auto = ETS(Demand))
+
+best.model %>%  # getting the parameters
+  tidy()
+
+best.model %>% accuracy() #getting the in-sample MAPE
+
+best.model.forecast <- best.model %>% 
+  forecast(h = 4) #forecasting for the 4 quarters of 2018
+
+autoplot(best.model.forecast) +
+  geom_point(data = best.model.forecast, mapping = aes(y = .mean), col = "red") 
+```
+The reported model parameter value estimates are 5.087381e-01 for the alpha smoothing parameter, 1.000194e-04 for the gamma smoothing parameter, 1.681678e+02 for the level, -7.087789e+00 for the first quarter of 2018, -2.537934e+01 for the second quarter of 2018, -9.694412e+00	for the third quarter of 2018
+
+The in-sample MAPE for the forecast is 4.632484
+
+Plot of the forecast is seen above
+
+
+8. As it is very costly to be short of personnel, we need to plan the staffing levels according to a forecast that we anticipate it will not be exceeded with a probability of 99%.  What are these quarterly demand levels?
+
+```{r}
+# Extract Confidence Intervals
+
+best.model.forecast %>% 
+  hilo(level =c(99)) %>%
+  unpack_hilo("99%") %>% # 99% is a text label
+  select(Quarter,"99%_lower", "99%_upper")
+```
+According to the figure above, the 99% confidence lower,upper bounds for Q1 of 2018 are 206.8903, 261.6029 respectively. The 99% confidence lower,upper bounds for Q2 of 2018 are 151.6982, 213.0841 respectively. The 99% confidence lower,upper bounds for Q3 of 2018 are 133.0062, 200.4078 respectively. The 99% confidence lower,upper bounds for Q4 of 2018 are 148.5351, 221.4600 respectively.
